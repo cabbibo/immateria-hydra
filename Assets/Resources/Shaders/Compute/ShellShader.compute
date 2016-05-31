@@ -1,0 +1,114 @@
+﻿#pragma kernel CSMain
+ 
+ #define threadX 8
+ #define threadY 8
+ #define threadZ 8
+
+ #define strideX 8
+ #define strideY 8
+ #define strideZ 8
+
+ #define gridX (threadX * strideX)
+ #define gridY (threadY * strideY)
+ #define gridZ (threadZ * strideZ)
+
+ 
+float _Time;
+float _Delta;
+float3 _HandL;
+float3 _HandR;
+int _TriggerL;
+int _TriggerL2;
+int _TriggerR;
+int _TriggerR2;
+int _NumDisformers;
+float  _Drawing;
+int _RibbonWidth;
+
+
+float radius = .4;
+
+#include "Chunks/VertStruct.cginc"
+#include "Chunks/PosStruct.cginc"
+#include "Chunks/springForce.cginc"
+
+#include "Chunks/handForce.cginc"
+
+
+RWStructuredBuffer<Vert> vertBuffer;
+RWStructuredBuffer<Pos> ogBuffer;
+RWStructuredBuffer<float3> disformBuffer;
+Texture2D<float4> _Audio;
+
+[numthreads(threadX,threadY,threadZ)]
+void CSMain (uint3 id : SV_DispatchThreadID) {
+  
+  int total = gridX * gridY * gridZ;
+  
+  int pID = id.x + id.y * gridX + id.z * gridX * gridY;
+  
+  int bID = int(floor( pID / _RibbonWidth) * _RibbonWidth);
+  int oID = pID + _RibbonWidth / 2;
+  if( oID > bID + _RibbonWidth ){ oID - _RibbonWidth; }
+
+  Vert vert = vertBuffer[pID];
+  Pos og = ogBuffer[pID];
+
+  Vert oppo = vertBuffer[oID];
+
+  vert.debug = float3( 1. , 1. , 1. );
+
+
+
+  float springDistance = 2 * 3.14159 * radius / 8;
+
+  float3 force = float3( 0 , 0 , 0 );
+  float4 audio = _Audio[float2(abs(sin(vert.uv.y * 20.)) * 256.,0)];
+
+  //force += audio.xyz* .001;
+
+  force +=  .8 * springForce( vert.pos , og.pos   , 0. );
+  //force +=  springForce( vert.pos , oppo.pos   , 0. );
+  //force += float3( 0. , 1. , 0.) * length( audio );
+
+   force += (_TriggerR -.4)* .01 * handForce( vert.pos , _HandR , 1.0 );
+   force += (_TriggerL -.4)* .01 * handForce( vert.pos , _HandL , 1.0 );
+
+  for( int i = 0; i < _NumDisformers; i++ ){
+
+    float3 pos = disformBuffer[i];
+    float3 dif = (vert.pos - pos );
+
+    //float audio = audioBuffer[ i ];
+
+    float audio = length( _Audio[ float2((float(i) / _NumDisformers) * 32,0)] );
+    if( length( dif ) < audio * .5 ){
+      force += audio * normalize( dif ) * .001;
+    }
+
+
+
+
+  }
+
+
+  
+
+  vert.vel += force * .03;
+  vert.vel *= .994;
+  //vert.vel += vert.vel * length(audio) * 1.;
+
+  vert.pos += vert.vel ;
+
+  vert.nor = normalize( oppo.pos - vert.pos );
+
+  Pos p;
+  p.pos = vert.pos * .99;
+  if( _TriggerR2 == true || _TriggerL2 == true  ){ ogBuffer[pID]  = p; }
+
+
+
+
+  vertBuffer[pID] = vert;
+
+}
